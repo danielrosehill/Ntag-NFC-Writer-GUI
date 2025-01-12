@@ -1,6 +1,7 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QLineEdit, QComboBox, QPushButton, QTextEdit, QGroupBox, QStyle, QMessageBox, QApplication)
+    QLineEdit, QComboBox, QPushButton, QTextEdit, QGroupBox, QStyle, QMessageBox, QApplication, QLabel)
 from PyQt6.QtCore import QTimer, QUrl
+from PyQt6.QtGui import QPixmap, QColor
 from PyQt6.QtMultimedia import QSoundEffect
 from smartcard.System import readers
 from smartcard.Exceptions import NoCardException
@@ -12,10 +13,17 @@ class NFCWriterGUI(QMainWindow):
         self.setWindowTitle("NFC URL Writer")
         self.setMinimumWidth(600)
         self.connection = None
+        self.tag_present = False
         
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
+        
+        # Presence Indicator
+        self.presence_indicator = QLabel()
+        self.presence_indicator.setFixedSize(20, 20)
+        self.presence_indicator.setStyleSheet("background-color: gray; border-radius: 10px;")
+        layout.addWidget(self.presence_indicator)
         
         reader_group = QGroupBox("NFC Reader")
         reader_layout = QVBoxLayout(reader_group)
@@ -33,7 +41,7 @@ class NFCWriterGUI(QMainWindow):
         button_group = QGroupBox("Actions")
         button_layout = QHBoxLayout(button_group)
         self.refresh_button = QPushButton("Refresh Readers")
-        self.write_button = QPushButton("Write URL")
+        self.write_button = QPushButton("Write URL and Lock")
         button_layout.addWidget(self.refresh_button)
         button_layout.addWidget(self.write_button)
         layout.addWidget(button_group)
@@ -43,7 +51,12 @@ class NFCWriterGUI(QMainWindow):
         layout.addWidget(self.status_log)
 
         self.refresh_button.clicked.connect(self.refresh_readers)
-        self.write_button.clicked.connect(self.write_url)
+        self.write_button.clicked.connect(self.write_and_lock_url)
+        
+        # Timer for tag presence detection
+        self.tag_timer = QTimer()
+        self.tag_timer.timeout.connect(self.check_tag_presence)
+        self.tag_timer.start(1000)  # Check every second
         
         self.refresh_readers()
 
@@ -106,7 +119,32 @@ class NFCWriterGUI(QMainWindow):
         
         return ndef_message
 
-    def write_url(self):
+    def lock_tag(self):
+        # Lock the tag by setting the lock bits
+        try:
+            for page in range(0, 16):  # Adjust based on your tag's memory layout
+                lock_apdu = [0xFF, 0x82, 0x00, page, 0x04, 0xFF, 0xFF, 0xFF, 0xFF]
+                response, sw1, sw2 = self.connection.transmit(lock_apdu)
+                if not (sw1 == 0x90 and sw2 == 0x00):
+                    raise Exception(f"Failed to lock page {page}: {hex(sw1)} {hex(sw2)}")
+            self.log("Tag locked successfully")
+        except Exception as e:
+            raise Exception(f"Error locking tag: {str(e)}")
+
+    def check_tag_presence(self):
+        try:
+            if self.connection:
+                self.connection.reconnect()
+                self.tag_present = True
+                self.presence_indicator.setStyleSheet("background-color: green; border-radius: 10px;")
+            else:
+                self.tag_present = False
+                self.presence_indicator.setStyleSheet("background-color: gray; border-radius: 10px;")
+        except Exception:
+            self.tag_present = False
+            self.presence_indicator.setStyleSheet("background-color: gray; border-radius: 10px;")
+
+    def write_and_lock_url(self):
         try:
             url = self.url_input.text()
             if not url.startswith(('http://', 'https://')):
@@ -134,8 +172,14 @@ class NFCWriterGUI(QMainWindow):
                 self._write_data(page, chunk)
                 page += 1
             
+            # Lock the tag after writing
+            self.lock_tag()
+            
             self.url_input.setText("https://")
-            QMessageBox.information(self, "Success", "URL written successfully!")
+            QMessageBox.information(self, "Success", "URL written and tag locked successfully!")
+            
+            # Automatically refresh for the next tag
+            self.refresh_readers()
             
         except Exception as e:
             self.log(f"Error: {str(e)}")
@@ -149,4 +193,3 @@ if __name__ == '__main__':
     window = NFCWriterGUI()
     window.show()
     sys.exit(app.exec())
- 

@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QLineEdit, QComboBox, QPushButton, QTextEdit, QGroupBox, QStyle, QMessageBox, QApplication)
-from PyQt6.QtCore import QTimer, QUrl
-from PyQt6.QtMultimedia import QSoundEffect
+    QLineEdit, QComboBox, QPushButton, QTextEdit, QGroupBox, QStyle, QMessageBox, QApplication, QLabel)
+from PyQt6.QtCore import QTimer
+from PyQt6.QtGui import QColor
 from smartcard.System import readers
 from smartcard.Exceptions import NoCardException
 import sys
@@ -12,10 +12,17 @@ class NFCWriterGUI(QMainWindow):
         self.setWindowTitle("NFC URL Writer")
         self.setMinimumWidth(600)
         self.connection = None
+        self.tag_present = False
         
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
+        
+        # Presence Indicator
+        self.presence_indicator = QLabel()
+        self.presence_indicator.setFixedSize(20, 20)
+        self.presence_indicator.setStyleSheet("background-color: gray; border-radius: 10px;")
+        layout.addWidget(self.presence_indicator)
         
         reader_group = QGroupBox("NFC Reader")
         reader_layout = QVBoxLayout(reader_group)
@@ -33,7 +40,7 @@ class NFCWriterGUI(QMainWindow):
         button_group = QGroupBox("Actions")
         button_layout = QHBoxLayout(button_group)
         self.refresh_button = QPushButton("Refresh Readers")
-        self.write_button = QPushButton("Write URL")
+        self.write_button = QPushButton("Write URL and Lock")
         button_layout.addWidget(self.refresh_button)
         button_layout.addWidget(self.write_button)
         layout.addWidget(button_group)
@@ -43,7 +50,12 @@ class NFCWriterGUI(QMainWindow):
         layout.addWidget(self.status_log)
 
         self.refresh_button.clicked.connect(self.refresh_readers)
-        self.write_button.clicked.connect(self.write_url)
+        self.write_button.clicked.connect(self.write_and_lock_url)
+        
+        # Timer for tag presence detection
+        self.tag_timer = QTimer()
+        self.tag_timer.timeout.connect(self.check_tag_presence)
+        self.tag_timer.start(1000)  # Check every second
         
         self.refresh_readers()
 
@@ -84,7 +96,7 @@ class NFCWriterGUI(QMainWindow):
             raise Exception(f"Write failed at page {page}: {hex(sw1)} {hex(sw2)}")
 
     def create_ndef_url(self, url):
-        url = url.lower().replace('https://', '').replace('http://', '')
+        url = url.lower().replace('https://', ''). replace('http://', '')
         url_bytes = url.encode()
         url_length = len(url_bytes)
         
@@ -106,7 +118,35 @@ class NFCWriterGUI(QMainWindow):
         
         return ndef_message
 
-    def write_url(self):
+    def lock_tag(self):
+        try:
+            # Set static lock bytes (pages 2-3)
+            static_lock_bytes = [0xFF, 0xFF, 0xFF, 0xFF]  # Adjust values as needed
+            self._write_data(2, static_lock_bytes)
+            
+            # Set dynamic lock bytes (page 40)
+            dynamic_lock_bytes = [0xFF, 0xFF, 0xFF, 0xFF]  # Adjust values as needed
+            self._write_data(40, dynamic_lock_bytes)
+            
+            self.log("Tag locked successfully")
+        except Exception as e:
+            self.log(f"Warning: Could not lock tag - {str(e)}")
+
+    def check_tag_presence(self):
+        try:
+            if self.connection:
+                # Attempt to reconnect to check tag presence
+                self.connection.reconnect()
+                self.tag_present = True
+                self.presence_indicator.setStyleSheet("background-color: green; border-radius: 10px;")
+            else:
+                self.tag_present = False
+                self.presence_indicator.setStyleSheet("background-color: gray; border-radius: 10px;")
+        except Exception:
+            self.tag_present = False
+            self.presence_indicator.setStyleSheet("background-color: gray; border-radius: 10px;")
+
+    def write_and_lock_url(self):
         try:
             url = self.url_input.text()
             if not url.startswith(('http://', 'https://')):
@@ -134,8 +174,14 @@ class NFCWriterGUI(QMainWindow):
                 self._write_data(page, chunk)
                 page += 1
             
+            # Attempt to lock the tag
+            self.lock_tag()
+            
             self.url_input.setText("https://")
             QMessageBox.information(self, "Success", "URL written successfully!")
+            
+            # Automatically refresh for the next tag
+            self.refresh_readers()
             
         except Exception as e:
             self.log(f"Error: {str(e)}")
@@ -149,4 +195,3 @@ if __name__ == '__main__':
     window = NFCWriterGUI()
     window.show()
     sys.exit(app.exec())
- 
