@@ -28,6 +28,14 @@ The GUI is intended for those quickly writing lots of these tags for the purpose
 
 ![alt text](screenshots/v1/4.png)
 
+## Installation
+
+- Clone and repo & launch the Python script after creating a virtual environment or download the package and add the launch path to a menu entry:
+
+![alt text](screenshots/installation/1.png)
+
+![alt text](screenshots/installation/2.png)
+
  
 ## Author
 
