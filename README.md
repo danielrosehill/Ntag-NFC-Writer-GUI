@@ -1,9 +1,10 @@
 # NFC Writer GUI For NTAG213/215/216 (OpenSUSE Tumbleweed Linux)
 
- ![alt text](screenshots/v2/1.png)
+ ![alt text](screenshots/v3/1.png)
+
 This Python GUI was fully generated using Claude Sonnet 3.5. 
 
-It is designed for writing URLs to NTAG213/215/216 type NFC tags (Mifare Ultralight C compatible tags). It includes a locking functionality to lock the tags after writing. 
+It is designed for writing URLs to NTAG213/215/216 type NFC tags (Mifare Ultralight C compatible tags) using the ACR. 1252 USB NFC reader/writer.
 
 These tags are widely available on platforms like Aliexpress, are cheap and affordable and suitable for use (my use-case) for inventory management systems.
 
