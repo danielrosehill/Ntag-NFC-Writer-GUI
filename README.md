@@ -14,14 +14,20 @@ I have been using it on Open SUSE Tumbleweed (KDE Plasma) .
 
 ## Screenshots
 
-### V2
+### V1
 
-![alt text](screenshots/v2/1.png)
+After learning that attempting to get compatibility for every type of NFC tag was way more complicated than it looked, I decided to be more modest and focus on the couple of tags I was working with at the NDEF level.
 
-![alt text](screenshots/v2/2.png)
+The GUI is intended for those quickly writing lots of these tags for the purpose of an inventory system. It features a convenient tally light to let the user know when the card is ready to be written, and then a safe to remove indicator in the tag has been written and locked.
 
+![alt text](screenshots/v1/1.png)
 
-![alt text](screenshots/v2/3.png)
+![alt text](screenshots/v1/2.png)
+
+![alt text](screenshots/v1/3.png)
+
+![alt text](screenshots/v1/4.png)
+
  
 ## Author
 
