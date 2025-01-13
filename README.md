@@ -4,7 +4,7 @@
 
 This Python GUI was fully generated using Claude Sonnet 3.5. 
 
-It is designed for writing URLs to NTAG213/215/216 type NFC tags (Mifare Ultralight C compatible tags) using the ACR. 1252 USB NFC reader/writer.
+It is designed for writing URLs to NTAG213/215/216 type NFC tags (Mifare Ultralight C compatible tags) using the ACR 1252 USB NFC reader/writer by ACS.
 
 These tags are widely available on platforms like Aliexpress, are cheap and affordable and suitable for use (my use-case) for inventory management systems.
 
