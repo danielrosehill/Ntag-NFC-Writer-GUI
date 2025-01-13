@@ -1,70 +1,70 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QLineEdit, QComboBox, QPushButton, QTextEdit, QGroupBox, QStyle, QMessageBox, QApplication, QLabel)
-from PyQt6.QtCore import QTimer, QUrl
-from PyQt6.QtGui import QPixmap, QColor
-from PyQt6.QtMultimedia import QSoundEffect
+    QLineEdit, QPushButton, QTextEdit, QGroupBox, QLabel, QApplication, 
+    QMessageBox, QComboBox)
+from PyQt6.QtCore import QTimer
 from smartcard.System import readers
 from smartcard.Exceptions import NoCardException
 import sys
 
-class NFCWriterGUI(QMainWindow):
+class NFCApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("NFC URL Writer")
         self.setMinimumWidth(600)
         self.connection = None
-        self.tag_present = False
+        self.card_detected = False
         
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
         
-        # Presence Indicator
-        self.presence_indicator = QLabel()
-        self.presence_indicator.setFixedSize(20, 20)
-        self.presence_indicator.setStyleSheet("background-color: gray; border-radius: 10px;")
-        layout.addWidget(self.presence_indicator)
-        
+        # Reader selection group
         reader_group = QGroupBox("NFC Reader")
-        reader_layout = QVBoxLayout(reader_group)
+        reader_layout = QHBoxLayout(reader_group)
         self.reader_combo = QComboBox()
+        self.refresh_button = QPushButton("Refresh Readers")
         reader_layout.addWidget(self.reader_combo)
+        reader_layout.addWidget(self.refresh_button)
         layout.addWidget(reader_group)
-
+        
+        # URL input group
         url_group = QGroupBox("URL Configuration")
         url_layout = QVBoxLayout(url_group)
         self.url_input = QLineEdit()
         self.url_input.setText("https://")
         url_layout.addWidget(self.url_input)
         layout.addWidget(url_group)
-
-        button_group = QGroupBox("Actions")
-        button_layout = QHBoxLayout(button_group)
-        self.refresh_button = QPushButton("Refresh Readers")
+        
+        # Buttons
+        button_layout = QHBoxLayout()
         self.write_button = QPushButton("Write URL and Lock")
-        button_layout.addWidget(self.refresh_button)
+        self.reset_button = QPushButton("Reset")
         button_layout.addWidget(self.write_button)
-        layout.addWidget(button_group)
-
+        button_layout.addWidget(self.reset_button)
+        layout.addLayout(button_layout)
+        
+        # Status log
         self.status_log = QTextEdit()
         self.status_log.setReadOnly(True)
         layout.addWidget(self.status_log)
-
-        self.refresh_button.clicked.connect(self.refresh_readers)
+        
+        # Timer for card detection
+        self.card_timer = QTimer()
+        self.card_timer.timeout.connect(self.check_for_card)
+        self.card_timer.start(1000)  # Check for card every second
+        
+        # Connect buttons
         self.write_button.clicked.connect(self.write_and_lock_url)
+        self.reset_button.clicked.connect(self.reset)
+        self.refresh_button.clicked.connect(self.refresh_readers)
         
-        # Timer for tag presence detection
-        self.tag_timer = QTimer()
-        self.tag_timer.timeout.connect(self.check_tag_presence)
-        self.tag_timer.start(1000)  # Check every second
-        
+        # Initialize reader list
         self.refresh_readers()
 
     def log(self, message):
         self.status_log.append(message)
         self.status_log.verticalScrollBar().setValue(
-            self.status_log.verticalScrollBar().maximum()
-        )
+            self.status_log.verticalScrollBar().maximum())
 
     def refresh_readers(self):
         try:
@@ -79,14 +79,31 @@ class NFCWriterGUI(QMainWindow):
         except Exception as e:
             self.log(f"Error refreshing readers: {str(e)}")
 
-    def connect_reader(self, selected_reader):
-        if not selected_reader:
-            raise Exception("No reader selected")
-        
-        r = readers()
-        self.reader = [reader for reader in r if str(reader) == selected_reader][0]
-        self.connection = self.reader.createConnection()
-        self.connection.connect()
+    def check_for_card(self):
+        try:
+            if self.connect_reader():
+                if not self.card_detected:
+                    self.card_detected = True
+                    self.log("Card detected")
+            else:
+                if self.card_detected:
+                    self.card_detected = False
+                    self.log("Card removed")
+        except Exception as e:
+            self.log(f"Error checking for card: {str(e)}")
+
+    def connect_reader(self):
+        try:
+            if not self.reader_combo.currentText():
+                return False
+            r = readers()
+            self.reader = [reader for reader in r 
+                          if str(reader) == self.reader_combo.currentText()][0]
+            self.connection = self.reader.createConnection()
+            self.connection.connect()
+            return True
+        except Exception as e:
+            return False
 
     def _write_data(self, page, data):
         while len(data) < 4:
@@ -101,48 +118,47 @@ class NFCWriterGUI(QMainWindow):
         url_bytes = url.encode()
         url_length = len(url_bytes)
         
-        NDEF_START = 0x03
-        ndef_length = url_length + 5
+        total_length = url_length + 5
         
-        tlv = [
-            NDEF_START,
-            ndef_length,
-            0xD1,
-            0x01,
-            url_length + 1,
-            0x55,
-            0x04
-        ]
+        if total_length > 254:
+            tlv = [
+                0x03,  # NDEF message TLV tag
+                0xFF,  # Extended length marker
+                (total_length >> 8) & 0xFF,
+                total_length & 0xFF,
+                0xD1,  # NDEF header
+                0x01,  # Type length
+                url_length + 1,  # Payload length
+                0x55,  # 'U' Type
+                0x04   # https:// prefix
+            ]
+        else:
+            tlv = [
+                0x03,  # NDEF message TLV tag
+                total_length,
+                0xD1,  # NDEF header
+                0x01,  # Type length
+                url_length + 1,
+                0x55,  # 'U' Type
+                0x04   # https:// prefix
+            ]
         
         ndef_message = tlv + list(url_bytes)
-        ndef_message += [0xFE]
+        ndef_message += [0xFE]  # TLV terminator
         
         return ndef_message
 
     def lock_tag(self):
-        # Lock the tag by setting the lock bits
         try:
-            for page in range(0, 16):  # Adjust based on your tag's memory layout
-                lock_apdu = [0xFF, 0x82, 0x00, page, 0x04, 0xFF, 0xFF, 0xFF, 0xFF]
-                response, sw1, sw2 = self.connection.transmit(lock_apdu)
-                if not (sw1 == 0x90 and sw2 == 0x00):
-                    raise Exception(f"Failed to lock page {page}: {hex(sw1)} {hex(sw2)}")
+            static_lock_bytes = [0xFF, 0xFF, 0xFF, 0xFF]
+            self._write_data(2, static_lock_bytes)
+            
+            dynamic_lock_bytes = [0xFF, 0xFF, 0xFF, 0xFF]
+            self._write_data(40, dynamic_lock_bytes)
+            
             self.log("Tag locked successfully")
         except Exception as e:
-            raise Exception(f"Error locking tag: {str(e)}")
-
-    def check_tag_presence(self):
-        try:
-            if self.connection:
-                self.connection.reconnect()
-                self.tag_present = True
-                self.presence_indicator.setStyleSheet("background-color: green; border-radius: 10px;")
-            else:
-                self.tag_present = False
-                self.presence_indicator.setStyleSheet("background-color: gray; border-radius: 10px;")
-        except Exception:
-            self.tag_present = False
-            self.presence_indicator.setStyleSheet("background-color: gray; border-radius: 10px;")
+            self.log(f"Warning: Could not lock tag - {str(e)}")
 
     def write_and_lock_url(self):
         try:
@@ -151,13 +167,14 @@ class NFCWriterGUI(QMainWindow):
                 QMessageBox.warning(self, "Invalid URL", "URL must start with http:// or https://")
                 return
             
-            if self.reader_combo.currentText() == "":
-                QMessageBox.warning(self, "No Reader", "No NFC reader selected")
+            if not self.card_detected:
+                QMessageBox.warning(self, "No Card", "Please place an NFC tag on the reader")
                 return
             
-            self.connect_reader(self.reader_combo.currentText())
-            self.log(f"Connected to: {self.reader}")
-            self.log(f"Writing URL: {url}")
+            if not self.connect_reader():
+                return
+            
+            self.log("Writing URL...")
             
             ndef_data = self.create_ndef_url(url)
             self.log("NDEF data: " + " ".join([hex(x) for x in ndef_data]))
@@ -171,15 +188,14 @@ class NFCWriterGUI(QMainWindow):
                 chunk = ndef_data[i:i+chunk_size]
                 self._write_data(page, chunk)
                 page += 1
+                
+                if page > 35:
+                    raise Exception("URL too long for tag capacity")
             
-            # Lock the tag after writing
             self.lock_tag()
             
             self.url_input.setText("https://")
             QMessageBox.information(self, "Success", "URL written and tag locked successfully!")
-            
-            # Automatically refresh for the next tag
-            self.refresh_readers()
             
         except Exception as e:
             self.log(f"Error: {str(e)}")
@@ -188,8 +204,14 @@ class NFCWriterGUI(QMainWindow):
             if self.connection:
                 self.connection.disconnect()
 
+    def reset(self):
+        self.url_input.setText("https://")
+        self.status_log.clear()
+        self.card_detected = False
+        self.log("Reset complete")
+
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    window = NFCWriterGUI()
+    window = NFCApp()
     window.show()
     sys.exit(app.exec())
