@@ -1,6 +1,6 @@
 # NFC Writer GUI For NTAG213/215/216 (OpenSUSE Tumbleweed Linux)
 
- ![alt text](screenshots/v3/1.png)
+![alt text](screenshots/v1/1.png)
 
 This Python GUI was fully generated using Claude Sonnet 3.5. 
 
