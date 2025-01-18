@@ -2,7 +2,9 @@
 
 ![alt text](screenshots/v1/1.png)
 
-This Python GUI was fully generated using Claude Sonnet 3.5. 
+ I created this simple GUI for writing NFC tags because I couldn't find one that would work on my operating system and it seemed like another fun project to task AI tools with!
+
+So far the first versions of this app have been achieved by carefully prompting and debugging with Claude Sonnet 3.5 and Deep Seek 3. 
 
 It is designed for writing URLs to NTAG213/215/216 type NFC tags (Mifare Ultralight C compatible tags) using the ACR 1252 USB NFC reader/writer by ACS.
 
