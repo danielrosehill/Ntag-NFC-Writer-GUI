@@ -1,43 +1,69 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton,
-    QTextEdit, QGroupBox, QLabel, QApplication, QMessageBox, QComboBox
+    QTextEdit, QGroupBox, QLabel, QApplication, QMessageBox, QComboBox,
+    QTabWidget
 )
 from PyQt6.QtCore import QTimer
 from smartcard.System import readers
 from smartcard.Exceptions import NoCardException
 import sys
-
+import webbrowser
 
 class NFCApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("NFC URL Writer (ACR-1252)")
+        self.setWindowTitle("NFC URL Reader/Writer (ACR-1252)")
         self.setMinimumWidth(600)
-        self.connection = None
+        self.write_connection = None
+        self.read_connection = None
         self.card_detected = False
         self.remaining_writes = 1
 
+        # Create main widget and layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        layout = QVBoxLayout(central_widget)
+        main_layout = QVBoxLayout(central_widget)
 
-        # Reader selection group
-        reader_group = QGroupBox("ACR-1252 Reader")
-        reader_layout = QHBoxLayout(reader_group)
+        # Create tab widget
+        self.tab_widget = QTabWidget()
+        main_layout.addWidget(self.tab_widget)
+
+        # Create write tab
+        write_tab = QWidget()
+        write_layout = QVBoxLayout(write_tab)
+        self.tab_widget.addTab(write_tab, "Write")
+
+        # Create read tab
+        read_tab = QWidget()
+        read_layout = QVBoxLayout(read_tab)
+        self.tab_widget.addTab(read_tab, "Read")
+
+        # Write tab - Reader selection group
+        write_reader_group = QGroupBox("ACR-1252 Reader")
+        write_reader_layout = QHBoxLayout(write_reader_group)
+        self.writer_combo = QComboBox()
+        self.write_refresh_button = QPushButton("Refresh Readers")
+        write_reader_layout.addWidget(self.writer_combo)
+        write_reader_layout.addWidget(self.write_refresh_button)
+        write_layout.addWidget(write_reader_group)
+
+        # Read tab - Reader selection group
+        read_reader_group = QGroupBox("ACR-1252 Reader")
+        read_reader_layout = QHBoxLayout(read_reader_group)
         self.reader_combo = QComboBox()
-        self.refresh_button = QPushButton("Refresh Readers")
-        reader_layout.addWidget(self.reader_combo)
-        reader_layout.addWidget(self.refresh_button)
-        layout.addWidget(reader_group)
+        self.read_refresh_button = QPushButton("Refresh Readers")
+        read_reader_layout.addWidget(self.reader_combo)
+        read_reader_layout.addWidget(self.read_refresh_button)
+        read_layout.addWidget(read_reader_group)
 
-        # URL input group
+        # Write tab - URL input group
         url_group = QGroupBox("URL Configuration")
         url_layout = QVBoxLayout(url_group)
         self.url_input = QLineEdit()
         self.url_input.setText("https://")
         url_layout.addWidget(self.url_input)
 
-        # Add write counter combo box
+        # Write tab - Add write counter combo box
         write_counter_layout = QHBoxLayout()
         write_counter_layout.addWidget(QLabel("Number of writes:"))
         self.write_counter_combo = QComboBox()
@@ -45,57 +71,108 @@ class NFCApp(QMainWindow):
         write_counter_layout.addWidget(self.write_counter_combo)
         url_layout.addLayout(write_counter_layout)
 
-        # Add remaining writes label
+        # Write tab - Add remaining writes label
         self.remaining_writes_label = QLabel("Remaining writes: 1")
         url_layout.addWidget(self.remaining_writes_label)
-        
-        layout.addWidget(url_group)
+        write_layout.addWidget(url_group)
 
-        # Buttons
-        button_layout = QHBoxLayout()
+        # Write tab - Buttons
+        write_button_layout = QHBoxLayout()
         self.write_button = QPushButton("Write URL and Lock")
         self.reset_button = QPushButton("Reset")
-        button_layout.addWidget(self.write_button)
-        button_layout.addWidget(self.reset_button)
-        layout.addLayout(button_layout)
+        write_button_layout.addWidget(self.write_button)
+        write_button_layout.addWidget(self.reset_button)
+        write_layout.addLayout(write_button_layout)
 
-        # Card status light
-        self.status_light = QLabel()
-        self.status_light.setFixedSize(20, 20)
-        self.status_light.setStyleSheet("background-color: red; border-radius: 10px;")
-        status_layout = QHBoxLayout()
-        status_layout.addWidget(QLabel("Card Status:"))
-        status_layout.addWidget(self.status_light)
-        layout.addLayout(status_layout)
+        # Write tab - Card status light
+        self.write_status_light = QLabel()
+        self.write_status_light.setFixedSize(20, 20)
+        self.write_status_light.setStyleSheet("background-color: red; border-radius: 10px;")
+        write_status_layout = QHBoxLayout()
+        write_status_layout.addWidget(QLabel("Card Status:"))
+        write_status_layout.addWidget(self.write_status_light)
+        write_layout.addLayout(write_status_layout)
 
-        # Status log
-        self.status_log = QTextEdit()
-        self.status_log.setReadOnly(True)
-        layout.addWidget(self.status_log)
+        # Write tab - Status log
+        self.write_status_log = QTextEdit()
+        self.write_status_log.setReadOnly(True)
+        write_layout.addWidget(self.write_status_log)
 
-        # Timer for card detection
-        self.card_timer = QTimer()
-        self.card_timer.timeout.connect(self.check_for_card)
-        self.card_timer.start(1000)  # Check for card every second
+        # Read tab - Status
+        read_status_group = QGroupBox("Tag Status")
+        read_status_layout = QVBoxLayout(read_status_group)
+        
+        # Read tab - Card status light
+        self.read_status_light = QLabel()
+        self.read_status_light.setFixedSize(20, 20)
+        self.read_status_light.setStyleSheet("background-color: red; border-radius: 10px;")
+        read_light_layout = QHBoxLayout()
+        read_light_layout.addWidget(QLabel("Card Status:"))
+        read_light_layout.addWidget(self.read_status_light)
+        read_status_layout.addLayout(read_light_layout)
+        
+        # Read tab - URL display
+        self.url_display = QLineEdit()
+        self.url_display.setReadOnly(True)
+        read_status_layout.addWidget(QLabel("Detected URL:"))
+        read_status_layout.addWidget(self.url_display)
+        
+        read_layout.addWidget(read_status_group)
+
+        # Read tab - Status log
+        self.read_status_log = QTextEdit()
+        self.read_status_log.setReadOnly(True)
+        read_layout.addWidget(self.read_status_log)
+
+        # Timers for card detection
+        self.write_card_timer = QTimer()
+        self.write_card_timer.timeout.connect(self.check_for_write_card)
+        self.write_card_timer.start(1000)  # Check for card every second
+
+        self.read_card_timer = QTimer()
+        self.read_card_timer.timeout.connect(self.check_for_read_card)
+        self.read_card_timer.start(1000)  # Check for card every second
 
         # Connect buttons
         self.write_button.clicked.connect(self.write_and_lock_url)
         self.reset_button.clicked.connect(self.reset)
-        self.refresh_button.clicked.connect(self.refresh_readers)
+        self.write_refresh_button.clicked.connect(self.refresh_writers)
+        self.read_refresh_button.clicked.connect(self.refresh_readers)
         self.write_counter_combo.currentTextChanged.connect(self.on_write_counter_changed)
 
-        # Initialize reader list
+        # Initialize reader lists
+        self.refresh_writers()
         self.refresh_readers()
 
-    def log(self, message):
-        self.status_log.append(message)
-        self.status_log.verticalScrollBar().setValue(
-            self.status_log.verticalScrollBar().maximum()
+    def write_log(self, message):
+        self.write_status_log.append(message)
+        self.write_status_log.verticalScrollBar().setValue(
+            self.write_status_log.verticalScrollBar().maximum()
+        )
+
+    def read_log(self, message):
+        self.read_status_log.append(message)
+        self.read_status_log.verticalScrollBar().setValue(
+            self.read_status_log.verticalScrollBar().maximum()
         )
 
     def on_write_counter_changed(self, value):
         self.remaining_writes = int(value)
         self.remaining_writes_label.setText(f"Remaining writes: {self.remaining_writes}")
+
+    def refresh_writers(self):
+        try:
+            reader_list = readers()
+            self.writer_combo.clear()
+            for reader in reader_list:
+                if "ACR1252" in str(reader):  # Filter for ACR-1252 readers
+                    self.writer_combo.addItem(str(reader))
+            if self.writer_combo.count() > 0:
+                self.write_log("ACR-1252 readers refreshed successfully")
+            else:
+                self.write_log("No ACR-1252 readers found")
+        except Exception as e:
+            self.write_log(f"Error refreshing readers: {str(e)}")
 
     def refresh_readers(self):
         try:
@@ -105,35 +182,58 @@ class NFCApp(QMainWindow):
                 if "ACR1252" in str(reader):  # Filter for ACR-1252 readers
                     self.reader_combo.addItem(str(reader))
             if self.reader_combo.count() > 0:
-                self.log("ACR-1252 readers refreshed successfully")
+                self.read_log("ACR-1252 readers refreshed successfully")
             else:
-                self.log("No ACR-1252 readers found")
+                self.read_log("No ACR-1252 readers found")
         except Exception as e:
-            self.log(f"Error refreshing readers: {str(e)}")
+            self.read_log(f"Error refreshing readers: {str(e)}")
 
-    def check_for_card(self):
+    def check_for_write_card(self):
         try:
-            if self.connect_reader():
+            if self.connect_write_reader():
                 if not self.card_detected:
                     self.card_detected = True
-                    self.status_light.setStyleSheet("background-color: green; border-radius: 10px;")
-                    self.log("Card detected and ready")
+                    self.write_status_light.setStyleSheet("background-color: green; border-radius: 10px;")
+                    self.write_log("Card detected and ready")
             else:
                 if self.card_detected:
                     self.card_detected = False
-                    self.status_light.setStyleSheet("background-color: red; border-radius: 10px;")
-                    self.log("Card removed")
+                    self.write_status_light.setStyleSheet("background-color: red; border-radius: 10px;")
+                    self.write_log("Card removed")
         except Exception as e:
-            self.log(f"Error checking for card: {str(e)}")
+            self.write_log(f"Error checking for card: {str(e)}")
 
-    def connect_reader(self):
+    def check_for_read_card(self):
+        try:
+            if self.connect_read_reader():
+                self.read_status_light.setStyleSheet("background-color: green; border-radius: 10px;")
+                self.read_tag()
+            else:
+                self.read_status_light.setStyleSheet("background-color: red; border-radius: 10px;")
+                self.url_display.clear()
+        except Exception as e:
+            self.read_log(f"Error checking for card: {str(e)}")
+
+    def connect_write_reader(self):
+        try:
+            if not self.writer_combo.currentText():
+                return False
+            r = readers()
+            self.writer = [reader for reader in r if str(reader) == self.writer_combo.currentText()][0]
+            self.write_connection = self.writer.createConnection()
+            self.write_connection.connect()
+            return True
+        except Exception as e:
+            return False
+
+    def connect_read_reader(self):
         try:
             if not self.reader_combo.currentText():
                 return False
             r = readers()
             self.reader = [reader for reader in r if str(reader) == self.reader_combo.currentText()][0]
-            self.connection = self.reader.createConnection()
-            self.connection.connect()
+            self.read_connection = self.reader.createConnection()
+            self.read_connection.connect()
             return True
         except Exception as e:
             return False
@@ -142,42 +242,146 @@ class NFCApp(QMainWindow):
         while len(data) < 4:
             data.append(0x00)
         apdu = [0xFF, 0xD6, 0x00, page] + [len(data)] + data
-        response, sw1, sw2 = self.connection.transmit(apdu)
+        response, sw1, sw2 = self.write_connection.transmit(apdu)
         if not (sw1 == 0x90 and sw2 == 0x00):
             raise Exception(f"Write failed at page {page}: {hex(sw1)} {hex(sw2)}")
+
+    def _read_data(self, page):
+        apdu = [0xFF, 0xB0, 0x00, page, 0x04]
+        response, sw1, sw2 = self.read_connection.transmit(apdu)
+        if not (sw1 == 0x90 and sw2 == 0x00):
+            raise Exception(f"Read failed at page {page}: {hex(sw1)} {hex(sw2)}")
+        return response
+
+    def read_tag(self):
+        try:
+            # Read capability container
+            cc = self._read_data(3)
+            if cc[0] != 0xE1:  # Check if tag is NDEF formatted
+                self.read_log("Tag is not NDEF formatted")
+                return
+
+            # Read first page to get length
+            first_chunk = self._read_data(4)
+            self.read_log(f"First page data: {' '.join([hex(x) for x in first_chunk])}")
+            
+            # Skip proprietary header and find NDEF message
+            # First byte (0x01) is proprietary, followed by NDEF TLV (0x03)
+            if first_chunk[1] != 0x03:  # NDEF message TLV tag
+                self.read_log(f"NDEF TLV tag not found where expected")
+                return
+
+            # Read data page by page until we find the NDEF record and terminator
+            ndef_data = first_chunk
+            found_d1 = False
+            current_page = 5  # Start from page 5 since we already have page 4
+            
+            while current_page <= 20:  # Reasonable limit for URL data
+                chunk = self._read_data(current_page)
+                self.read_log(f"Read page {current_page}: {' '.join([hex(x) for x in chunk])}")
+                ndef_data.extend(chunk)
+                
+                # Check if we found the NDEF record header (0xD1)
+                if not found_d1 and 0xD1 in chunk:
+                    found_d1 = True
+                
+                # If we found the terminator after finding 0xD1, we're done
+                if found_d1 and 0xFE in chunk:
+                    break
+                    
+                current_page += 1
+            
+            # Trim data at terminator
+            if 0xFE in ndef_data:
+                terminator_index = ndef_data.index(0xFE)
+                ndef_data = ndef_data[:terminator_index + 1]
+            
+            self.read_log(f"Trimmed NDEF data: {' '.join([hex(x) for x in ndef_data])}")
+
+            # Find NDEF record in the data (should start with 0xD1)
+            ndef_start = 4  # Skip the TLV header
+            while ndef_start < len(ndef_data):
+                if ndef_data[ndef_start] == 0xD1:
+                    break
+                ndef_start += 1
+
+            if ndef_start >= len(ndef_data):
+                self.read_log("Could not find NDEF record header")
+                return
+
+            self.read_log(f"Found NDEF record at offset: {ndef_start}")
+
+            # Parse record header
+            type_length = ndef_data[ndef_start + 1]
+            payload_length = ndef_data[ndef_start + 2]
+            record_offset = ndef_start + 3
+
+            self.read_log(f"Type length: {type_length}, Payload length: {payload_length}")
+
+            # Verify URI record type
+            if ndef_data[record_offset] != 0x55:  # 'U' type
+                self.read_log(f"Not a URI record: {hex(ndef_data[record_offset])}")
+                return
+
+            # Get URL prefix and data
+            prefix_code = ndef_data[record_offset + 1]
+            url_start = record_offset + 2
+
+            self.read_log(f"URL prefix code: {hex(prefix_code)}")
+
+            # Handle different URL prefixes
+            prefix_map = {
+                0x00: "",           # No prefix
+                0x01: "http://www.",
+                0x02: "https://www.",
+                0x03: "http://",
+                0x04: "https://"
+            }
+            
+            if prefix_code in prefix_map:
+                # URL length is payload_length - 1 (subtract prefix byte)
+                url_bytes = ndef_data[url_start:url_start + payload_length - 1]
+                url = prefix_map[prefix_code] + bytes(url_bytes).decode('utf-8')
+                
+                self.read_log(f"Extracted URL bytes: {' '.join([hex(x) for x in url_bytes])}")
+                
+                if self.url_display.text() != url:
+                    self.url_display.setText(url)
+                    self.read_log(f"URL detected: {url}")
+                    webbrowser.get('google-chrome').open(url)
+            else:
+                self.read_log(f"Unsupported URL prefix code: {hex(prefix_code)}")
+
+        except Exception as e:
+            self.read_log(f"Error reading tag: {str(e)}")
 
     def create_ndef_url(self, url):
         url = url.lower().replace('https://', '').replace('http://', '')
         url_bytes = url.encode()
         url_length = len(url_bytes)
-        total_length = url_length + 5
-
-        if total_length > 254:
-            tlv = [
-                0x03,  # NDEF message TLV tag
-                0xFF,  # Extended length marker
-                (total_length >> 8) & 0xFF,
-                total_length & 0xFF,
-                0xD1,  # NDEF header
-                0x01,  # Type length
-                url_length + 1,  # Payload length
-                0x55,  # 'U' Type
-                0x04   # https:// prefix
-            ]
-        else:
-            tlv = [
-                0x03,  # NDEF message TLV tag
-                total_length,
-                0xD1,  # NDEF header
-                0x01,  # Type length
-                url_length + 1,
-                0x55,  # 'U' Type
-                0x04   # https:// prefix
-            ]
-
-        ndef_message = tlv + list(url_bytes)
-        ndef_message += [0xFE]  # TLV terminator
-        return ndef_message
+        
+        # Calculate total NDEF message length (including all headers)
+        ndef_length = url_length + 5  # URL + NDEF header(1) + type length(1) + payload length(1) + type(1) + prefix(1)
+        total_length = ndef_length + 2  # Add TLV tag and length bytes
+        
+        # Create the message structure
+        message = [
+            0x01,  # Proprietary header
+            0x03,  # NDEF message TLV tag
+            (total_length >> 8) & 0xFF,  # Length high byte
+            total_length & 0xFF,         # Length low byte
+            0xD1,  # NDEF header (MB=1, ME=1, SR=1, TNF=1)
+            0x01,  # Type length (1 byte for 'U')
+            url_length + 1,  # Payload length (URL + prefix byte)
+            0x55,  # 'U' type
+            0x04,  # https:// prefix
+        ]
+        
+        # Add URL and terminator
+        message.extend(url_bytes)
+        message.append(0xFE)  # TLV terminator
+        
+        return message
 
     def lock_tag(self):
         try:
@@ -187,9 +391,9 @@ class NFCApp(QMainWindow):
             dynamic_lock_bytes = [0xFF, 0xFF, 0xFF, 0xFF]
             self._write_data(40, dynamic_lock_bytes)
 
-            self.log("Tag locked successfully")
+            self.write_log("Tag locked successfully")
         except Exception as e:
-            self.log(f"Warning: Could not lock tag - {str(e)}")
+            self.write_log(f"Warning: Could not lock tag - {str(e)}")
 
     def write_and_lock_url(self):
         if not self.card_detected:
@@ -207,7 +411,7 @@ class NFCApp(QMainWindow):
                 QMessageBox.warning(self, "Invalid URL", "URL must start with http:// or https://")
                 return
 
-            if not self.connect_reader():
+            if not self.connect_write_reader():
                 return
 
             if self.remaining_writes <= 0:
@@ -215,10 +419,10 @@ class NFCApp(QMainWindow):
                 QMessageBox.warning(self, "Write Limit Reached", "Maximum number of writes reached. Settings have been reset.")
                 return
 
-            self.log("Writing URL...")
+            self.write_log("Writing URL...")
 
             ndef_data = self.create_ndef_url(url)
-            self.log("NDEF data: " + " ".join([hex(x) for x in ndef_data]))
+            self.write_log("NDEF data: " + " ".join([hex(x) for x in ndef_data]))
 
             cc_data = [0xE1, 0x10, 0x6D, 0x00]
             self._write_data(3, cc_data)
@@ -240,28 +444,28 @@ class NFCApp(QMainWindow):
             self.remaining_writes_label.setText(f"Remaining writes: {self.remaining_writes}")
 
             if self.remaining_writes > 0:
-                self.status_light.setStyleSheet("background-color: orange; border-radius: 10px;")
-                self.log("Tag locked. You can now remove the card.")
+                self.write_status_light.setStyleSheet("background-color: orange; border-radius: 10px;")
+                self.write_log("Tag locked. You can now remove the card.")
                 QMessageBox.information(self, "Success", f"URL written and tag locked successfully! {self.remaining_writes} writes remaining.")
             else:
                 self.reset()
                 QMessageBox.information(self, "Success", "URL written and tag locked successfully! Maximum writes reached, settings reset.")
 
         except Exception as e:
-            self.log(f"Error: {str(e)}")
+            self.write_log(f"Error: {str(e)}")
             QMessageBox.critical(self, "Error", str(e))
         finally:
-            if self.connection:
-                self.connection.disconnect()
+            if self.write_connection:
+                self.write_connection.disconnect()
 
     def reset(self):
         self.url_input.setText("https://")
-        self.status_log.clear()
+        self.write_status_log.clear()
         self.card_detected = False
-        self.status_light.setStyleSheet("background-color: red; border-radius: 10px;")
+        self.write_status_light.setStyleSheet("background-color: red; border-radius: 10px;")
         self.remaining_writes = int(self.write_counter_combo.currentText())
         self.remaining_writes_label.setText(f"Remaining writes: {self.remaining_writes}")
-        self.log("Reset complete")
+        self.write_log("Reset complete")
 
 
 if __name__ == '__main__':
