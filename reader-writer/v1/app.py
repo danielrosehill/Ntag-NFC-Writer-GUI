@@ -98,6 +98,13 @@ class NFCApp(QMainWindow):
         self.write_status_log.setReadOnly(True)
         write_layout.addWidget(self.write_status_log)
 
+        # Read tab - Control group
+        read_control_group = QGroupBox("Reader Control")
+        read_control_layout = QHBoxLayout(read_control_group)
+        self.read_toggle_button = QPushButton("Start Reader")
+        read_control_layout.addWidget(self.read_toggle_button)
+        read_layout.addWidget(read_control_group)
+
         # Read tab - Status
         read_status_group = QGroupBox("Tag Status")
         read_status_layout = QVBoxLayout(read_status_group)
@@ -140,9 +147,11 @@ class NFCApp(QMainWindow):
         self.read_refresh_button.clicked.connect(self.refresh_readers)
         self.write_counter_combo.currentTextChanged.connect(self.on_write_counter_changed)
 
-        # Initialize reader lists
+        # Initialize state
         self.refresh_writers()
         self.refresh_readers()
+        self.reader_active = False
+        self.read_toggle_button.clicked.connect(self.toggle_reader)
 
     def write_log(self, message):
         self.write_status_log.append(message)
@@ -203,7 +212,24 @@ class NFCApp(QMainWindow):
         except Exception as e:
             self.write_log(f"Error checking for card: {str(e)}")
 
+    def toggle_reader(self):
+        if self.reader_active:
+            self.reader_active = False
+            self.read_toggle_button.setText("Start Reader")
+            self.read_card_timer.stop()
+            self.read_status_light.setStyleSheet("background-color: red; border-radius: 10px;")
+            self.url_display.clear()
+            self.read_log("Reader stopped")
+        else:
+            self.reader_active = True
+            self.read_toggle_button.setText("Stop Reader")
+            self.read_card_timer.start()
+            self.read_log("Reader started")
+
     def check_for_read_card(self):
+        if not self.reader_active:
+            return
+            
         try:
             if self.connect_read_reader():
                 self.read_status_light.setStyleSheet("background-color: green; border-radius: 10px;")
@@ -276,7 +302,7 @@ class NFCApp(QMainWindow):
             found_d1 = False
             current_page = 5  # Start from page 5 since we already have page 4
             
-            while current_page <= 20:  # Reasonable limit for URL data
+            while current_page <= 39:  # NTAG215 has 40 pages (0-39) with last page reserved for lock bytes
                 chunk = self._read_data(current_page)
                 self.read_log(f"Read page {current_page}: {' '.join([hex(x) for x in chunk])}")
                 ndef_data.extend(chunk)
@@ -299,14 +325,9 @@ class NFCApp(QMainWindow):
             self.read_log(f"Trimmed NDEF data: {' '.join([hex(x) for x in ndef_data])}")
 
             # Find NDEF record in the data (should start with 0xD1)
-            ndef_start = 4  # Skip the TLV header
-            while ndef_start < len(ndef_data):
-                if ndef_data[ndef_start] == 0xD1:
-                    break
-                ndef_start += 1
-
-            if ndef_start >= len(ndef_data):
-                self.read_log("Could not find NDEF record header")
+            ndef_start = 3  # NDEF record starts after TLV tag and length
+            if ndef_data[ndef_start] != 0xD1:  # NDEF header (MB=1, ME=1, SR=1, TNF=1)
+                self.read_log(f"Invalid NDEF header: {hex(ndef_data[ndef_start])}")
                 return
 
             self.read_log(f"Found NDEF record at offset: {ndef_start}")
@@ -362,20 +383,32 @@ class NFCApp(QMainWindow):
         
         # Calculate total NDEF message length (including all headers)
         ndef_length = url_length + 5  # URL + NDEF header(1) + type length(1) + payload length(1) + type(1) + prefix(1)
-        total_length = ndef_length + 2  # Add TLV tag and length bytes
         
-        # Create the message structure
-        message = [
-            0x01,  # Proprietary header
-            0x03,  # NDEF message TLV tag
-            (total_length >> 8) & 0xFF,  # Length high byte
-            total_length & 0xFF,         # Length low byte
-            0xD1,  # NDEF header (MB=1, ME=1, SR=1, TNF=1)
-            0x01,  # Type length (1 byte for 'U')
-            url_length + 1,  # Payload length (URL + prefix byte)
-            0x55,  # 'U' type
-            0x04,  # https:// prefix
-        ]
+        # Use extended length format for larger payloads
+        if ndef_length > 254:
+            message = [
+                0x01,  # Proprietary header
+                0x03,  # NDEF message TLV tag
+                0xFF,  # Extended length marker
+                (ndef_length >> 8) & 0xFF,  # Length high byte
+                ndef_length & 0xFF,         # Length low byte
+                0xD1,  # NDEF header (MB=1, ME=1, SR=1, TNF=1)
+                0x01,  # Type length (1 byte for 'U')
+                url_length + 1,  # Payload length (URL + prefix byte)
+                0x55,  # 'U' type
+                0x04,  # https:// prefix
+            ]
+        else:
+            message = [
+                0x01,  # Proprietary header
+                0x03,  # NDEF message TLV tag
+                ndef_length,  # Length
+                0xD1,  # NDEF header (MB=1, ME=1, SR=1, TNF=1)
+                0x01,  # Type length (1 byte for 'U')
+                url_length + 1,  # Payload length (URL + prefix byte)
+                0x55,  # 'U' type
+                0x04,  # https:// prefix
+            ]
         
         # Add URL and terminator
         message.extend(url_bytes)
@@ -434,7 +467,7 @@ class NFCApp(QMainWindow):
                 self._write_data(page, chunk)
                 page += 1
 
-                if page > 35:
+                if page > 39:  # NTAG215 has 40 pages (0-39) with last page reserved for lock bytes
                     raise Exception("URL too long for tag capacity")
 
             self.lock_tag()
